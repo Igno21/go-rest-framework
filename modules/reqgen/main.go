@@ -41,12 +41,12 @@ func worker(id int, jobs <-chan string, results chan<- *http.Response, wg *sync.
 }
 
 func main() {
-	jobs := make(chan string, 100)
-	results := make(chan *http.Response, 100)
+	jobs := make(chan string, 1000)
+	results := make(chan *http.Response, 1000)
 	var wg sync.WaitGroup
 
 	// Start workers
-	for w := 1; w <= 3; w++ {
+	for w := 1; w <= 1; w++ {
 		wg.Add(1)
 		go worker(w, jobs, results, &wg)
 	}
@@ -55,14 +55,14 @@ func main() {
 	start := time.Now()
 
 	// Send requests (replace with your actual URLs)
-	for j := 1; j <= 1; j++ {
+	for j := 1; j <= 1000; j++ {
 		jobs <- "http://127.0.0.1:8080"
 	}
 	close(jobs)
 
 	// Collect results
-	wg.Wait()
-	for a := 1; a <= 1; a++ {
+	// wg.Wait()
+	for a := 1; a <= 1000; a++ {
 		resp := <-results
 		if resp != nil {
 			body, _ := io.ReadAll(resp.Body) // Read the response body

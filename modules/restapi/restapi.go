@@ -14,5 +14,6 @@ func StartBackend(port string) {
 		_, _ = fmt.Fprint(rw, "origin server response")
 	})
 
+	fmt.Printf("Starting backend: %s\n", port)
 	log.Fatal(http.ListenAndServe(":"+port, originServerHandler))
 }
