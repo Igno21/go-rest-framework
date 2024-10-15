@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"go-rest-framework/modules/restapi"
 	"io"
 	"log"
 	"net/http"
@@ -18,6 +19,7 @@ type Server struct {
 }
 
 type RequestResponseWrapper struct {
+	id       int64 // do i want this for sync?
 	Request  *http.Request
 	Response chan *http.Response
 }
@@ -30,34 +32,44 @@ func createServer() *Server {
 }
 
 // addBackend adds a backend server to the pool and starts a goroutine to handle its requests
-func (s *Server) addBackend(serverUrl url.URL) {
+func (s *Server) addBackend(port string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.pool[serverUrl.Host]; ok {
+	// go routine simulates a backend
+	go restapi.StartBackend("8081")
+
+	if _, ok := s.pool[port]; ok {
 		return // Backend already exists
 	}
 
 	ch := make(chan *RequestResponseWrapper)
-	s.pool[serverUrl.Host] = ch
+	s.pool[port] = ch
 
 	go func() {
 		defer func() {
 			s.mu.Lock()
-			fmt.Printf("Server handled %d requests", s.count[serverUrl.Host])
-			delete(s.pool, serverUrl.Host)
+			fmt.Printf("Server handled %d requests", s.count[port])
+			delete(s.pool, port)
 			s.mu.Unlock()
 		}()
 
 		for wrapper := range ch {
 
-			fmt.Printf("Processing request for %s: %s\n", serverUrl.Host, wrapper.Request.URL)
+			fmt.Printf("Processing request for %s to %s\n", wrapper.Request.Host, port)
+			originalURL, err := url.Parse(wrapper.Request.URL.String())
+			if err != nil {
+				fmt.Printf("Error parsing URL: %v\n", err)
+				wrapper.Response <- nil
+				continue
+			}
+			fmt.Printf("originalURL: %+v\n", originalURL)
 
-			// Modify the request to target the origin server
-			wrapper.Request.URL.Host = serverUrl.Host
-			wrapper.Request.URL.Scheme = serverUrl.Scheme
-			wrapper.Request.Host = serverUrl.Host
-			wrapper.Request.RequestURI = "" // Reset RequestURI
+			// Modify the URL to target the origin server
+			originalURL.Host = "127.0.0.1:" + port
+			originalURL.Scheme = "http"
+			wrapper.Request.URL = originalURL
+			wrapper.Request.RequestURI = ""
 
 			// Forward the request to the origin server
 			response, err := http.DefaultClient.Do(wrapper.Request)
@@ -78,13 +90,13 @@ func (s *Server) addBackend(serverUrl url.URL) {
 
 			// Create a new response with the modified body
 			body, _ := io.ReadAll(response.Body)
-			newBody := serverUrl.Host + "->" + string(body)
-			t := &http.Response{
-				Status:        "200 OK",
-				StatusCode:    200,
-				Proto:         "HTTP/1.1",
-				ProtoMajor:    1,
-				ProtoMinor:    1,
+			newBody := port + "->" + string(body)
+			newResp := &http.Response{
+				Status:        response.Status,
+				StatusCode:    response.StatusCode,
+				Proto:         response.Proto,
+				ProtoMajor:    response.ProtoMajor,
+				ProtoMinor:    response.ProtoMinor,
 				Body:          io.NopCloser(bytes.NewBufferString(newBody)),
 				ContentLength: int64(len(body)),
 				Request:       wrapper.Request,
@@ -92,9 +104,9 @@ func (s *Server) addBackend(serverUrl url.URL) {
 			}
 
 			// Send the modified response back to the reverse proxy
-			wrapper.Response <- t
+			wrapper.Response <- newResp
 		}
-		fmt.Printf("Backend %s removed from pool\n", serverUrl.Host)
+		fmt.Printf("Backend %s removed from pool\n", port)
 	}()
 }
 
@@ -109,9 +121,9 @@ func (s *Server) forwardRequest(serverUrl string, req *http.Request) *http.Respo
 			Response: make(chan *http.Response),
 		}
 		ch <- wrapper
+		s.count[serverUrl]++
 		return <-wrapper.Response
 	}
-	s.count[serverUrl]++
 
 	fmt.Printf("Backend %s not found\n", serverUrl)
 	return nil // Or return an error response
@@ -121,19 +133,17 @@ func main() {
 	server := createServer()
 	server.count = make(map[string]int)
 
-	originServerURL, err := url.Parse("http://127.0.0.1:8081")
-	if err != nil {
-		log.Fatal("invalid origin server URL")
-	}
+	originServerPorts := "8081"
 
-	server.addBackend(*originServerURL)
+	server.addBackend(originServerPorts)
 
 	// Create the reverse proxy handler
 	reverseProxy := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		fmt.Printf("[reverse proxy server] received request at: %s\n", time.Now())
 
 		// Forward the request to the backend server
-		response := server.forwardRequest(originServerURL.Host, req)
+		fmt.Printf("Handling request for %s\n", req.Host)
+		response := server.forwardRequest(originServerPorts, req)
 		if response == nil {
 			http.Error(rw, "Backend server error", http.StatusInternalServerError)
 			return

@@ -55,14 +55,14 @@ func main() {
 	start := time.Now()
 
 	// Send requests (replace with your actual URLs)
-	for j := 1; j <= 100; j++ {
+	for j := 1; j <= 1; j++ {
 		jobs <- "http://127.0.0.1:8080"
 	}
 	close(jobs)
 
 	// Collect results
 	wg.Wait()
-	for a := 1; a <= 100; a++ {
+	for a := 1; a <= 1; a++ {
 		resp := <-results
 		if resp != nil {
 			body, _ := io.ReadAll(resp.Body) // Read the response body
