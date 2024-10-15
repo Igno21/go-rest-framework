@@ -137,3 +137,11 @@ func (s *Server) getBackend() (chan *RequestResponseWrapper, bool) {
 
 	return s.pool[backendPort], true
 }
+
+func (s *Server) Shutdown() {
+	fmt.Printf("SHUTTING DOWN\n")
+	fmt.Printf("PORT\tCOUNT\n")
+	for port, count := range s.count {
+		fmt.Printf("%s\t%d\n", port, count)
+	}
+}
