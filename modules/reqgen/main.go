@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,30 +19,21 @@ func worker(id int, jobs <-chan string, results chan<- *http.Response, wg *sync.
 			results <- nil
 			continue
 		}
-		defer resp.Body.Close() // Close the response body
 
-		body, err := io.ReadAll(resp.Body) // Read the response body
-		if err != nil {
-			fmt.Printf("Worker %d: Error reading body: %v\n", id, err)
-			results <- nil
-			continue
-		}
-
-		// Create a new response with the read body
-		newResp := &http.Response{
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
-			Header:     resp.Header,
-			Body:       io.NopCloser(bytes.NewBuffer(body)), // Create a new ReadCloser from the body
-		}
-
-		results <- newResp // Send the new response with the body
+		results <- resp // Send the new response with the body
 	}
 }
 
 func main() {
-	jobs := make(chan string, 1000)
-	results := make(chan *http.Response, 1000)
+	// set up application flags
+	requests := flag.Int("r", 100, "The number of requests to send")
+	proxyPort := flag.String("p", "8080", "The port of the reverse proxy")
+
+	// parse flags
+	flag.Parse()
+
+	jobs := make(chan string, *requests)
+	results := make(chan *http.Response, *requests)
 	var wg sync.WaitGroup
 
 	// Start workers
@@ -55,14 +46,16 @@ func main() {
 	start := time.Now()
 
 	// Send requests (replace with your actual URLs)
-	for j := 1; j <= 1000; j++ {
-		jobs <- "http://127.0.0.1:8080"
+	for j := 1; j <= *requests; j++ {
+		jobs <- "http://127.0.0.1:" + *proxyPort
 	}
 	close(jobs)
 
 	// Collect results
 	// wg.Wait()
-	for a := 1; a <= 1000; a++ {
+	sCount := 0
+	eCount := 0
+	for a := 1; a <= *requests; a++ {
 		resp := <-results
 		if resp != nil {
 			body, _ := io.ReadAll(resp.Body) // Read the response body
@@ -71,9 +64,16 @@ func main() {
 		} else {
 			fmt.Printf("Response %d: Error\n", a)
 		}
+
+		if code := resp.StatusCode; code == 200 {
+			sCount++
+		} else {
+			eCount++
+		}
 	}
 
 	// Calculate and print elapsed time
 	elapsed := time.Since(start)
 	fmt.Printf("Took %s\n", elapsed)
+	fmt.Printf("Success: %d\tError: %d", sCount, eCount)
 }

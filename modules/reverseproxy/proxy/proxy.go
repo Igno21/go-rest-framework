@@ -1,35 +1,33 @@
 package proxy
 
 import (
-	"bytes"
 	"fmt"
 	"go-rest-framework/modules/restapi"
-	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
+	"time"
 )
 
-type Server struct {
-	mu    sync.Mutex
-	pool  map[string]chan *RequestResponseWrapper
-	count map[string]int
-}
-
-type RequestResponseWrapper struct {
-	Request  *http.Request
+type HttpProxy struct {
+	Request  chan *http.Request
 	Response chan *http.Response
 }
 
-func NewRRW() *RequestResponseWrapper {
-	return &RequestResponseWrapper{}
+type Server struct {
+	mu    sync.Mutex
+	pool  map[string]*HttpProxy
+	count map[string]int
+	id    int
 }
 
 func CreateServer() *Server {
 	return &Server{
-		pool:  make(map[string]chan *RequestResponseWrapper),
+		pool:  make(map[string]*HttpProxy),
 		count: make(map[string]int),
+		id:    1,
 	}
 }
 
@@ -46,8 +44,12 @@ func (s *Server) addBackend(port string) {
 	// go routine simulates a backend
 	go restapi.StartBackend(port)
 
-	backend := make(chan *RequestResponseWrapper)
-	s.pool[port] = backend
+	httpProxy := &HttpProxy{
+		make(chan *http.Request),
+		make(chan *http.Response),
+	}
+
+	s.pool[port] = httpProxy
 
 	go func() {
 		defer func() {
@@ -56,50 +58,48 @@ func (s *Server) addBackend(port string) {
 			s.mu.Unlock()
 		}()
 
-		for rrw := range backend {
+		for request := range httpProxy.Request {
+			// Health check the backend server
+			healthy := s.healthCheck(port)
 
-			fmt.Printf("Processing request for %s to %s\n", rrw.Request.Host, port)
-			originalURL, err := url.Parse(rrw.Request.URL.String())
+			if !healthy {
+				fmt.Printf("Restart backend %s", port)
+				s.addBackend(port)
+				for attempt := 0; attempt < 3 && !healthy; attempt++ {
+					healthy = s.healthCheck(port)
+					time.Sleep(time.Millisecond * 100)
+				}
+				if !healthy {
+					fmt.Printf("Backend failed %s", port)
+					httpProxy.Response <- &http.Response{StatusCode: http.StatusInternalServerError}
+					continue
+				}
+			}
+
+			fmt.Printf("Processing request for %s through %s to %s\n", request.RemoteAddr, request.Host, port)
+			originalURL, err := url.Parse(request.URL.String())
 			if err != nil {
 				fmt.Printf("Error parsing URL: %v\n", err)
-				rrw.Response = nil
 				continue
 			}
-			fmt.Printf("originalURL: %+v\n", originalURL)
 
 			// Modify the URL to target the origin server
 			originalURL.Host = "127.0.0.1:" + port
 			originalURL.Scheme = "http"
-			rrw.Request.URL = originalURL
-			rrw.Request.RequestURI = ""
+			request.URL = originalURL
+			request.RequestURI = ""
 
 			// Forward the request to the origin server
-			response, err := http.DefaultClient.Do(rrw.Request)
+			response, err := http.DefaultClient.Do(request)
 			if err != nil {
 				// Handle error (e.g., create an error response)
 				fmt.Printf("Error forwarding request: %v\n", err)
-				rrw.Response <- &http.Response{StatusCode: http.StatusInternalServerError}
+				httpProxy.Response <- &http.Response{StatusCode: http.StatusInternalServerError}
 				continue
 			}
 
-			// Create a new response with the modified body
-			body, _ := io.ReadAll(response.Body)
-			newBody := port + "->" + string(body)
-			newResp := &http.Response{
-				Status:        response.Status,
-				StatusCode:    response.StatusCode,
-				Proto:         response.Proto,
-				ProtoMajor:    response.ProtoMajor,
-				ProtoMinor:    response.ProtoMinor,
-				Body:          io.NopCloser(bytes.NewBufferString(newBody)),
-				ContentLength: int64(len(body)),
-				Request:       rrw.Request,
-				Header:        make(http.Header, 0),
-			}
-			newResp.Body.Close() // Close response body
-
-			// Send the modified response back to the reverse proxy
-			rrw.Response <- newResp
+			fmt.Printf("[reverse proxy server] successfully received response at: %s\n\n", time.Now())
+			httpProxy.Response <- response
 		}
 		fmt.Printf("Backend %s removed from pool\n", port)
 	}()
@@ -108,34 +108,41 @@ func (s *Server) addBackend(port string) {
 }
 
 // forwardRequest forwards a request to the appropriate backend server
-func (s *Server) ForwardRequest(rrw *RequestResponseWrapper) *http.Response {
+func (s *Server) ForwardRequest(req *http.Request) *http.Response {
 
 	if backend, ok := s.getBackend(); ok {
-		rrw.Response = make(chan *http.Response)
-		backend <- rrw
-
-		return <-rrw.Response
+		requestId := strconv.Itoa(s.id)
+		s.id++
+		req.Header.Set("X-Request-ID", requestId)
+		backend.Request <- req
+		select {
+		case resp := <-backend.Response:
+			responseID := resp.Header.Get("X-Request-ID")
+			if requestId != responseID {
+				fmt.Printf("Error: Request ID mismatch: got=%s, want=%s\n", responseID, requestId)
+			}
+			return resp
+		case <-time.After(5 * time.Second):
+			return &http.Response{StatusCode: http.StatusGatewayTimeout}
+		}
 	}
 
 	return &http.Response{StatusCode: http.StatusInternalServerError} // Return an error response
 }
 
-func (s *Server) getBackend() (chan *RequestResponseWrapper, bool) {
+func (s *Server) getBackend() (*HttpProxy, bool) {
 	// Allowable ports for backend applications
-	originServerPorts := []string{"8081", "8082", "8083", "8084"}
+	originServerPorts := []string{"8081", "8082", "8083", "8084", "8085", "8086", "8087"}
 
 	// For testing we'll use a random server
-	backendPort := originServerPorts[rand.Intn(len(originServerPorts))]
+	port := originServerPorts[rand.Intn(len(originServerPorts))]
 
 	// Add backend to the pool
-	if _, ok := s.pool[backendPort]; !ok {
-		s.addBackend(backendPort)
+	if _, ok := s.pool[port]; !ok {
+		s.addBackend(port)
 	}
 
-	// count of time's we've used the backend
-	s.count[backendPort]++
-
-	return s.pool[backendPort], true
+	return s.pool[port], true
 }
 
 func (s *Server) Shutdown() {
@@ -144,4 +151,19 @@ func (s *Server) Shutdown() {
 	for port, count := range s.count {
 		fmt.Printf("%s\t%d\n", port, count)
 	}
+}
+
+func (s *Server) healthCheck(port string) bool {
+	healthCheckURL := fmt.Sprintf("http://127.0.0.1:%s", port)
+	client := http.Client{Timeout: 1 * time.Second}
+	retries := 5
+	for i := 0; i < retries; i++ {
+		resp, err := client.Get(healthCheckURL)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			return true
+		}
+		fmt.Printf("Waiting for backend %s...\n", port)
+		time.Sleep(time.Millisecond * 100)
+	}
+	return false
 }
