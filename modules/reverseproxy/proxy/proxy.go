@@ -17,10 +17,11 @@ type HttpProxy struct {
 }
 
 type Server struct {
-	mu    sync.Mutex
-	pool  map[string]*HttpProxy
-	count map[string]int
-	id    int
+	mu       sync.Mutex
+	pool     map[string]*HttpProxy
+	count    map[string]int
+	id       int
+	mismatch int
 }
 
 func CreateServer() *Server {
@@ -119,6 +120,7 @@ func (s *Server) ForwardRequest(req *http.Request) *http.Response {
 		case resp := <-backend.Response:
 			responseID := resp.Header.Get("X-Request-ID")
 			if requestId != responseID {
+				s.mismatch++
 				fmt.Printf("Error: Request ID mismatch: got=%s, want=%s\n", responseID, requestId)
 			}
 			return resp
@@ -141,6 +143,7 @@ func (s *Server) getBackend() (*HttpProxy, bool) {
 	if _, ok := s.pool[port]; !ok {
 		s.addBackend(port)
 	}
+	s.count[port]++
 
 	return s.pool[port], true
 }
@@ -151,6 +154,7 @@ func (s *Server) Shutdown() {
 	for port, count := range s.count {
 		fmt.Printf("%s\t%d\n", port, count)
 	}
+	fmt.Printf("Mismatch - %d\n", s.mismatch)
 }
 
 func (s *Server) healthCheck(port string) bool {

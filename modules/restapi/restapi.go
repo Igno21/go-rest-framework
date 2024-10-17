@@ -13,7 +13,9 @@ func StartBackend(port string) {
 		fmt.Printf("[origin server] received request at: %s\n", time.Now())
 		fmt.Printf("Request from : %s\n", req.RemoteAddr)
 		// Simulate random failures
-		failures := false
+		rw.Header().Set("X-Request-ID", req.Header.Get("X-Request-ID"))
+
+		failures := true
 		if failures {
 			if rand.Float64() < 0.1 { // 20% chance of failure
 				if rand.Float64() < 0.5 { // 50% chance of error response
@@ -31,7 +33,6 @@ func StartBackend(port string) {
 			}
 		}
 		time.Sleep(time.Millisecond * 15)
-		rw.Header().Set("X-Request-ID", req.Header.Get("X-Request-ID"))
 		_, _ = fmt.Fprint(rw, port+" - origin server response")
 	})
 
