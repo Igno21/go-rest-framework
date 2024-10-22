@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"strconv"
 	"sync"
@@ -68,15 +69,18 @@ func (pp *ProxyPool) addBackend(addr string) {
 
 		restapi := exec.Command("restapi", args...)
 		fmt.Println("Starting restapi with: " + restapi.String())
+
+		// redirect stdout/err
+		restapi.Stdout = os.Stdout
+		restapi.Stderr = os.Stderr
+
 		err := restapi.Start()
 		if err != nil {
 			fmt.Printf("Error starting restapi: %s\n", err.Error())
 		}
 
+		// Wait for command to start
 		restapi.Wait()
-		fmt.Println("PROCESS: ", restapi.Process, restapi.ProcessState)
-
-		fmt.Println("STARTED?")
 	}()
 
 	// TODO: buffered channels to allow for queuing of requests? can we signal when a channel is drained?
@@ -220,7 +224,6 @@ func (pp *ProxyPool) healthCheck(addr string) bool {
 		if err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				fmt.Println("HEALTHY!")
 				return true
 			}
 		}

@@ -26,7 +26,6 @@ func StartBackend(addr string, singleRequest bool) {
 	originServer := http.Server{
 		Addr: addr,
 		Handler: http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-			fmt.Printf("Request: %+v\n", req)
 
 			if req.URL.Path == "/health" {
 				rw.WriteHeader(http.StatusOK)
