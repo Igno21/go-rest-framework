@@ -43,7 +43,9 @@ func main() {
 
 			// Write the response back out
 			rw.WriteHeader(response.StatusCode)
-			io.Copy(rw, response.Body)
+			if response.Body != nil {
+				io.Copy(rw, response.Body)
+			}
 			fmt.Printf("Request Complete\n")
 		}),
 	}

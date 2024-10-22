@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,6 +26,12 @@ func StartBackend(addr string, singleRequest bool) {
 	originServer := http.Server{
 		Addr: addr,
 		Handler: http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+			fmt.Printf("Request: %+v\n", req)
+
+			if req.URL.Path == "/health" {
+				rw.WriteHeader(http.StatusOK)
+				return
+			}
 			if singleRequest {
 				wg.Add(1)       // Increment WaitGroup counter
 				defer wg.Done() // Decrement counter when handler exits
@@ -35,12 +42,13 @@ func StartBackend(addr string, singleRequest bool) {
 			rw.Header().Set("X-Request-ID", req.Header.Get("X-Request-ID"))
 
 			// simulate processing time
-			time.Sleep(time.Second * 1)
+			time.Sleep(time.Millisecond * 50)
 			_, _ = fmt.Fprint(rw, addr+" - origin server response")
 
 			if singleRequest {
 				requestHandled <- true
 			}
+
 		}),
 	}
 
@@ -71,8 +79,8 @@ func StartBackend(addr string, singleRequest bool) {
 		if err := originServer.Shutdown(ctx); err != nil {
 			log.Fatalf("Server forced to shutdown: %v\n", err)
 		}
-		<-shutdownComplete
 	}
+	<-shutdownComplete
 
 	fmt.Printf("Origin Server stopped: %s\n", addr)
 }
@@ -96,3 +104,12 @@ func StartBackend(addr string, singleRequest bool) {
 // 		}
 // 	}
 // }
+
+func main() {
+	originAddr := flag.String("a", "", "Address to start the origin server on")
+	singleRequest := flag.Bool("s", false, "Single request instances of backend (default false)")
+
+	flag.Parse()
+
+	StartBackend(*originAddr, *singleRequest)
+}

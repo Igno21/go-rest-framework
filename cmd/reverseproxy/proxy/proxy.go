@@ -6,11 +6,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strconv"
 	"sync"
 	"time"
-
-	"github.com/Igno21/go-rest-framework"
 )
 
 // TODO: start writing some tests
@@ -51,12 +50,34 @@ func (pp *ProxyPool) addBackend(addr string) {
 	defer pp.mu.Unlock()
 
 	if _, ok := pp.availableServer[addr]; ok {
-		fmt.Printf("backend exists")
+		fmt.Printf("backend exists\n")
 		return // Backend already exists
 	}
 
 	// go routine simulates a backend
-	go restapi.StartBackend(addr, pp.singleRequest)
+	// go restapi.StartBackend(addr, pp.singleRequest)
+	go func() {
+		args := []string{
+			"-a",
+			addr,
+		}
+
+		if pp.singleRequest {
+			args = append(args, "-s")
+		}
+
+		restapi := exec.Command("restapi", args...)
+		fmt.Println("Starting restapi with: " + restapi.String())
+		err := restapi.Start()
+		if err != nil {
+			fmt.Printf("Error starting restapi: %s\n", err.Error())
+		}
+
+		restapi.Wait()
+		fmt.Println("PROCESS: ", restapi.Process, restapi.ProcessState)
+
+		fmt.Println("STARTED?")
+	}()
 
 	// TODO: buffered channels to allow for queuing of requests? can we signal when a channel is drained?
 	//
@@ -78,20 +99,13 @@ func (pp *ProxyPool) addBackend(addr string) {
 			// Health check the backend server
 			// If server is not responding, attemp to start it
 			// If we're still not healthy, respond with an http.InternalServerError
-			// healthy := pp.healthCheck(addr)
-			// if !healthy {
-			// 	fmt.Printf("Restart backend %s\n", addr)
-			// 	pp.addBackend(addr)
-			// 	for attempt := 0; attempt < 3 && !healthy; attempt++ {
-			// 		healthy = pp.healthCheck(addr)
-			// 		time.Sleep(time.Millisecond * 100)
-			// 	}
-			// 	if !healthy {
-			// 		fmt.Printf("Backend failed %s\n", addr)
-			// 		httpProxy.Response <- &http.Response{StatusCode: http.StatusInternalServerError}
-			// 		continue
-			// 	}
-			// }
+
+			healthy := pp.healthCheck(addr)
+			if !healthy {
+				fmt.Printf("Backend failed %s\n", addr)
+				httpProxy.Response <- &http.Response{StatusCode: http.StatusInternalServerError}
+				continue
+			}
 
 			fmt.Printf("Processing request for %s through %s to %s\n", request.RemoteAddr, request.Host, addr)
 			originalURL, err := url.Parse(request.URL.String())
@@ -120,8 +134,6 @@ func (pp *ProxyPool) addBackend(addr string) {
 		}
 		fmt.Printf("Backend %s removed from pool\n", addr)
 	}()
-
-	fmt.Printf("Backend started %s\n", addr)
 }
 
 // forwardRequest forwards a request to the appropriate backend server
@@ -134,10 +146,14 @@ func (pp *ProxyPool) ForwardRequest(req *http.Request) *http.Response {
 		backend.Request <- req
 		select {
 		case resp := <-backend.Response:
-			responseID := resp.Header.Get("X-Request-ID")
-			if requestId != responseID {
-				pp.proxiedMistmatch++
-				fmt.Printf("Error: Request ID mismatch: got=%s, want=%s\n", responseID, requestId)
+			// We received a response
+			switch {
+			case resp.StatusCode >= 200 && resp.StatusCode < 300:
+				responseID := resp.Header.Get("X-Request-ID")
+				if requestId != responseID {
+					pp.proxiedMistmatch++
+					fmt.Printf("Error: Request ID mismatch: got=%s, want=%s\n", responseID, requestId)
+				}
 			}
 
 			// If we want to handle 1 request at a time, close these channels to shut down the go routines
@@ -146,7 +162,7 @@ func (pp *ProxyPool) ForwardRequest(req *http.Request) *http.Response {
 				close(backend.Response)
 			}
 			return resp
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 			return &http.Response{StatusCode: http.StatusGatewayTimeout}
 		}
 	}
@@ -196,16 +212,20 @@ func (pp *ProxyPool) Stop() {
 }
 
 func (pp *ProxyPool) healthCheck(addr string) bool {
-	healthCheckURL := "http://" + addr
-	client := http.Client{Timeout: 1 * time.Second}
-	retries := 5
+	healthCheckURL := "http://" + addr + "/health"
+	client := http.Client{Timeout: 3 * time.Second}
+	retries := 10
 	for i := 0; i < retries; i++ {
 		resp, err := client.Get(healthCheckURL)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			return true
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				fmt.Println("HEALTHY!")
+				return true
+			}
 		}
 		fmt.Printf("Waiting for backend %s...\n", addr)
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Second * 1)
 	}
 	return false
 }
