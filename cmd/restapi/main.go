@@ -51,9 +51,6 @@ func StartBackend(addr string, singleRequest bool) {
 		}),
 	}
 
-	// Simulate system start up time
-	time.Sleep(time.Millisecond * 75)
-
 	go func() {
 		fmt.Println("Starting origin server at", addr)
 		if err := originServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
