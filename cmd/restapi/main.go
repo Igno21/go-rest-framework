@@ -1,4 +1,4 @@
-package restapi
+package main
 
 import (
 	"context"
@@ -10,6 +10,14 @@ import (
 )
 
 func StartBackend(addr string, singleRequest bool) {
+	// TODO: can we use buffered channels and a flag to signal we've finished our queue of requests and shutdown
+	//       if len(chan) is 0 for x time shut it down?
+
+	// TODO: create a channel cycle for tracking idle time when no request has been received before shuttind down
+	//       a different approach to single request but also not live forever
+
+	// TODO: implement a ServMux to allow for single request while not shutting down the server with different
+	//			 endpoints, e.g. /health
 	requestHandled := make(chan bool, 1)
 	shutdownComplete := make(chan bool, 1)
 	var wg sync.WaitGroup
@@ -35,6 +43,9 @@ func StartBackend(addr string, singleRequest bool) {
 			}
 		}),
 	}
+
+	// Simulate system start up time
+	time.Sleep(time.Millisecond * 75)
 
 	go func() {
 		fmt.Println("Starting origin server at", addr)

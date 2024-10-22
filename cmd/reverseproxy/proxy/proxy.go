@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"fmt"
-	"go-rest-framework/modules/restapi"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -10,7 +9,15 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/Igno21/go-rest-framework"
 )
+
+// TODO: start writing some tests
+
+// TODO: make a list of implementation patterns, e.g. 1 and done, always up, life time, etc
+
+// TODO: can we store our pool in a SQLite file?
 
 type HttpProxy struct {
 	Request  chan *http.Request
@@ -49,10 +56,10 @@ func (pp *ProxyPool) addBackend(addr string) {
 	}
 
 	// go routine simulates a backend
-	// TODO: race condition exists if previous backend hasn't fully stopped before starting
-	//       a new one on the same address.
 	go restapi.StartBackend(addr, pp.singleRequest)
 
+	// TODO: buffered channels to allow for queuing of requests? can we signal when a channel is drained?
+	//
 	httpProxy := &HttpProxy{
 		make(chan *http.Request, 1),
 		make(chan *http.Response, 1),

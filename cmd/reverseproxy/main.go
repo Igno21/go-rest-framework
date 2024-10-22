@@ -9,10 +9,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"reverseproxy/proxy"
 	"syscall"
 	"time"
+
+	"github.com/Igno21/go-rest-framework/cmd/reverseproxy/proxy"
 )
+
+// TODO: Move everything up a level.
 
 func main() {
 	proxyAddr := flag.String("a", "127.0.0.1", "Address to start the proxy server on")
