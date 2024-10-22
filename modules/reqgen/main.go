@@ -27,7 +27,7 @@ func worker(id int, jobs <-chan string, results chan<- *http.Response, wg *sync.
 func main() {
 	// set up application flags
 	requests := flag.Int("r", 100, "The number of requests to send")
-	proxyPort := flag.String("p", "8080", "The port of the reverse proxy")
+	proxyAddr := flag.String("a", "http://127.0.0.1:8080", "The port of the reverse proxy")
 
 	// parse flags
 	flag.Parse()
@@ -47,7 +47,7 @@ func main() {
 
 	// Send requests (replace with your actual URLs)
 	for j := 1; j <= *requests; j++ {
-		jobs <- "http://127.0.0.1:" + *proxyPort
+		jobs <- *proxyAddr
 	}
 	close(jobs)
 

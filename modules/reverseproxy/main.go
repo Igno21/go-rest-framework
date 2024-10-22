@@ -15,36 +15,39 @@ import (
 )
 
 func main() {
+	proxyAddr := flag.String("a", "127.0.0.1", "Address to start the proxy server on")
 	proxyPort := flag.String("p", "8080", "Port to start the proxy server on")
-	// Create proxy server
-	proxyServer := proxy.CreateServer()
+	singleRequest := flag.Bool("s", false, "Single request instances of backend (default false)")
+	backendCount := flag.Int("b", 0, "Number of backend instances allowed at once; 0 is no limit (default 0)")
 
-	// Create the reverse proxy handler
-	reverseProxy := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		fmt.Printf("[reverse proxy server] received request at: %s\n", time.Now())
+	flag.Parse()
 
-		// Forward the request to the backend server
-		fmt.Printf("Handling request for %s\n", req.RemoteAddr)
-		response := proxyServer.ForwardRequest(req)
-		if response == nil {
-			http.Error(rw, "Backend server error", http.StatusInternalServerError)
-			return
-		}
-
-		// Write the response back out
-		rw.WriteHeader(response.StatusCode)
-		io.Copy(rw, response.Body)
-	})
+	// Create proxy
+	fmt.Printf("Creating proxy with singleRequest %v and backendCount %d\n", *singleRequest, *backendCount)
+	proxy := proxy.CreateProxy(*singleRequest, *backendCount)
 
 	// Create a server instance
 	srv := &http.Server{
-		Addr:    ":" + *proxyPort,
-		Handler: reverseProxy,
+		Addr: *proxyAddr + ":" + *proxyPort,
+		Handler: http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+			// Forward the request to the backend server
+			fmt.Printf("Handling request for %s\n", req.RemoteAddr)
+			response := proxy.ForwardRequest(req)
+			if response == nil {
+				http.Error(rw, "Backend server error", http.StatusInternalServerError)
+				return
+			}
+
+			// Write the response back out
+			rw.WriteHeader(response.StatusCode)
+			io.Copy(rw, response.Body)
+			fmt.Printf("Request Complete\n")
+		}),
 	}
 
 	// Start the proxy server in a goroutine
 	go func() {
-		fmt.Println("Starting reverse proxy server on :" + *proxyPort)
+		fmt.Println("Starting reverse proxy server on " + srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Error starting server: %v\n", err)
 		}
@@ -57,7 +60,7 @@ func main() {
 	// Wait for a signal
 	<-sigChan
 	fmt.Println("Shutting down server...")
-	proxyServer.Shutdown()
+	proxy.Stop()
 
 	// Create a context with a timeout for the shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
