@@ -136,7 +136,6 @@ func (pp *ProxyPool) addBackend(addr string) {
 			fmt.Printf("[reverse proxy] successfully received response at: %s\n", time.Now())
 			httpProxy.Response <- response
 		}
-		fmt.Printf("Backend %s removed from pool\n", addr)
 	}()
 }
 
@@ -208,6 +207,14 @@ func (pp *ProxyPool) getServer() (*HttpProxy, bool) {
 
 func (pp *ProxyPool) Stop() {
 	fmt.Printf("SHUTTING DOWN\n")
+
+	for server, proxy := range pp.availableServer {
+		pp.stopProxy(server)
+		close(proxy.Request)
+		close(proxy.Response)
+	}
+	// TODO: Remove this, currently to keep printing consistent
+	time.Sleep(100 * time.Millisecond)
 	fmt.Printf("Server\t\tCount\n")
 	for server, count := range pp.proxyCount {
 		fmt.Printf("%s\t%d\n", server, count)
@@ -230,5 +237,19 @@ func (pp *ProxyPool) healthCheck(addr string) bool {
 		fmt.Printf("Waiting for backend %s...\n", addr)
 		time.Sleep(time.Second * 1)
 	}
+	return false
+}
+
+func (pp *ProxyPool) stopProxy(addr string) bool {
+	stopURL := "http://" + addr + "/stop"
+	client := http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(stopURL)
+	if err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return true
+		}
+	}
+
 	return false
 }

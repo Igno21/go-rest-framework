@@ -19,35 +19,37 @@ func StartBackend(addr string, singleRequest bool) {
 
 	// TODO: implement a ServMux to allow for single request while not shutting down the server with different
 	//			 endpoints, e.g. /health
-	requestHandled := make(chan bool, 1)
-	shutdownComplete := make(chan bool, 1)
+	shutdown := make(chan bool, 1)
 	var wg sync.WaitGroup
 
 	originServer := http.Server{
 		Addr: addr,
 		Handler: http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-
-			if req.URL.Path == "/health" {
+			switch req.URL.Path {
+			case "/health":
 				rw.WriteHeader(http.StatusOK)
 				return
+			case "/stop":
+				shutdown <- true
+				return
+			default:
+				if singleRequest {
+					wg.Add(1)       // Increment WaitGroup counter
+					defer wg.Done() // Decrement counter when handler exits
+				}
+
+				fmt.Printf("[origin server] received request at: %s\n", time.Now())
+				fmt.Printf("Request from : %s\n", req.RemoteAddr)
+				rw.Header().Set("X-Request-ID", req.Header.Get("X-Request-ID"))
+
+				// simulate processing time
+				time.Sleep(time.Millisecond * 50)
+				_, _ = fmt.Fprint(rw, addr+" - origin server response")
+
+				if singleRequest {
+					shutdown <- true
+				}
 			}
-			if singleRequest {
-				wg.Add(1)       // Increment WaitGroup counter
-				defer wg.Done() // Decrement counter when handler exits
-			}
-
-			fmt.Printf("[origin server] received request at: %s\n", time.Now())
-			fmt.Printf("Request from : %s\n", req.RemoteAddr)
-			rw.Header().Set("X-Request-ID", req.Header.Get("X-Request-ID"))
-
-			// simulate processing time
-			time.Sleep(time.Millisecond * 50)
-			_, _ = fmt.Fprint(rw, addr+" - origin server response")
-
-			if singleRequest {
-				requestHandled <- true
-			}
-
 		}),
 	}
 
@@ -57,28 +59,26 @@ func StartBackend(addr string, singleRequest bool) {
 			log.Fatalf("Error starting Origin Server %s: %v", addr, err)
 		}
 		fmt.Println("Stopped serving new connections", addr)
-		shutdownComplete <- true
+		shutdown <- true
 	}()
 
-	if singleRequest {
-		// Wait until we've handled the request before shutting down
-		<-requestHandled
+	<-shutdown
+	// Wait for the handler to finish
+	wg.Wait() // Wait for all handlers to complete
 
-		// Wait for the handler to finish
-		wg.Wait() // Wait for all handlers to complete
+	// Create a context with a timeout for the shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-		// Create a context with a timeout for the shutdown
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		// Gracefully shut down the server
-		if err := originServer.Shutdown(ctx); err != nil {
-			log.Fatalf("Server forced to shutdown: %v\n", err)
-		}
+	// Gracefully shut down the server
+	if err := originServer.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v\n", err)
 	}
-	<-shutdownComplete
+
+	<-shutdown
 
 	fmt.Printf("Origin Server stopped: %s\n", addr)
+
 }
 
 // func simulateFailures() {

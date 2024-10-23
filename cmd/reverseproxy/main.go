@@ -7,9 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/Igno21/go-rest-framework/cmd/reverseproxy/proxy"
@@ -25,56 +22,61 @@ func main() {
 
 	flag.Parse()
 
+	address := *proxyAddr + ":" + *proxyPort
+	shutdown := make(chan bool)
 	// Create proxy
 	fmt.Printf("Creating proxy with singleRequest %v and backendCount %d\n", *singleRequest, *backendCount)
 	proxy := proxy.CreateProxy(*singleRequest, *backendCount)
 
 	// Create a server instance
-	srv := &http.Server{
-		Addr: *proxyAddr + ":" + *proxyPort,
+	proxyServer := &http.Server{
+		Addr: address,
 		Handler: http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-			// Forward the request to the backend server
-			fmt.Printf("Handling request for %s\n", req.RemoteAddr)
-			response := proxy.ForwardRequest(req)
-			if response == nil {
-				http.Error(rw, "Backend server error", http.StatusInternalServerError)
-				return
-			}
+			switch req.URL.Path {
+			case "/health":
+				rw.WriteHeader(http.StatusOK)
+			case "/stop":
+				proxy.Stop()
+				rw.WriteHeader(http.StatusOK)
+				shutdown <- true
+			default:
+				// Forward the request to the backend server
+				fmt.Printf("Handling request for %s\n", req.RemoteAddr)
+				response := proxy.ForwardRequest(req)
+				if response == nil {
+					http.Error(rw, "Backend server error", http.StatusInternalServerError)
+					return
+				}
 
-			// Write the response back out
-			rw.WriteHeader(response.StatusCode)
-			if response.Body != nil {
-				io.Copy(rw, response.Body)
+				// Write the response back out
+				rw.WriteHeader(response.StatusCode)
+				if response.Body != nil {
+					io.Copy(rw, response.Body)
+				}
+				fmt.Printf("Request Complete\n")
 			}
-			fmt.Printf("Request Complete\n")
 		}),
 	}
 
-	// Start the proxy server in a goroutine
 	go func() {
-		fmt.Println("Starting reverse proxy server on " + srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Println("Starting origin server at", address)
+		if err := proxyServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Error starting server: %v\n", err)
 		}
+		fmt.Println("Stopped serving new connections", address)
+		shutdown <- true
 	}()
 
-	// Create a channel to receive OS signals
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Wait for a signal
-	<-sigChan
-	fmt.Println("Shutting down server...")
-	proxy.Stop()
-
+	<-shutdown
 	// Create a context with a timeout for the shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// Gracefully shut down the server
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := proxyServer.Shutdown(ctx); err != nil {
 		log.Fatalf("Server forced to shutdown: %v\n", err)
 	}
 
-	fmt.Println("Server stopped")
+	<-shutdown
+	fmt.Printf("Proxy server stopped: %s\n", address)
 }
