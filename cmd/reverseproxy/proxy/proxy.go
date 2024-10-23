@@ -15,9 +15,9 @@ import (
 
 // TODO: start writing some tests
 
-// TODO: make a list of implementation patterns, e.g. 1 and done, always up, life time, etc
-
 // TODO: can we store our pool in a SQLite file?
+
+// TODO: Log output instead of printing to stdout
 
 type HttpProxy struct {
 	Request  chan *http.Request
@@ -50,13 +50,7 @@ func (pp *ProxyPool) addBackend(addr string) {
 	pp.mu.Lock()
 	defer pp.mu.Unlock()
 
-	if _, ok := pp.availableServer[addr]; ok {
-		fmt.Printf("backend exists\n")
-		return // Backend already exists
-	}
-
-	// go routine simulates a backend
-	// go restapi.StartBackend(addr, pp.singleRequest)
+	// Create a new process for the backend
 	go func() {
 		args := []string{
 			"-a",
@@ -84,7 +78,6 @@ func (pp *ProxyPool) addBackend(addr string) {
 	}()
 
 	// TODO: buffered channels to allow for queuing of requests? can we signal when a channel is drained?
-	//
 	httpProxy := &HttpProxy{
 		make(chan *http.Request, 1),
 		make(chan *http.Response, 1),
@@ -175,6 +168,14 @@ func (pp *ProxyPool) ForwardRequest(req *http.Request) *http.Response {
 
 func (pp *ProxyPool) getServer() (*HttpProxy, bool) {
 	var address string
+	// TODO: Refactor this
+	// check if we have any ready backends
+	//		- how do we tell if we have a ready backend? flag as part of the HttpProxy?
+
+	// create one if we don't and we're allowed to
+
+	// otherwise return a busy one
+
 	if pp.backendCount == 0 || len(pp.availableServer) < pp.backendCount {
 		// if we don't have a backend server bound, or we're below the cap; add a new one
 		// find available port
@@ -187,7 +188,11 @@ func (pp *ProxyPool) getServer() (*HttpProxy, bool) {
 		defer listener.Close()
 
 		address = "localhost:" + strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
-		pp.addBackend(address)
+
+		// verify address doesn't already exist before adding
+		if _, ok := pp.availableServer[address]; !ok {
+			pp.addBackend(address)
+		}
 	} else {
 		// we're at max backends, we want to get one at random
 		// TODO: Grab one with some sort of logic, not at random, this isn't great :)
@@ -201,7 +206,10 @@ func (pp *ProxyPool) getServer() (*HttpProxy, bool) {
 			iter++
 		}
 	}
+
+	// Increment the number of times the server has been used
 	pp.proxyCount[address]++
+
 	return pp.availableServer[address], true
 }
 
@@ -213,8 +221,6 @@ func (pp *ProxyPool) Stop() {
 		close(proxy.Request)
 		close(proxy.Response)
 	}
-	// TODO: Remove this, currently to keep printing consistent
-	time.Sleep(100 * time.Millisecond)
 	fmt.Printf("Server\t\tCount\n")
 	for server, count := range pp.proxyCount {
 		fmt.Printf("%s\t%d\n", server, count)
