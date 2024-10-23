@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/Igno21/go-rest-framework/internal/serverutil"
 )
 
 func worker(id int, jobs <-chan string, results chan<- *http.Response, wg *sync.WaitGroup) {
@@ -25,28 +27,10 @@ func worker(id int, jobs <-chan string, results chan<- *http.Response, wg *sync.
 	}
 }
 
-func healthCheck(addr string) bool {
-	healthCheckURL := "http://" + addr + "/health"
-	client := http.Client{Timeout: 3 * time.Second}
-	retries := 10
-	for i := 0; i < retries; i++ {
-		resp, err := client.Get(healthCheckURL)
-		if err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return true
-			}
-		}
-		fmt.Printf("Waiting for backend %s...\n", addr)
-		time.Sleep(time.Second * 1)
-	}
-	return false
-}
-
 func stopProxy(addr string) bool {
-	healthCheckURL := "http://" + addr + "/stop"
+	stopProxyURL := "http://" + addr + "/stop"
 	client := http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(healthCheckURL)
+	resp, err := client.Get(stopProxyURL)
 	if err == nil {
 		defer resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
@@ -104,7 +88,7 @@ func GenerateRequests(requestCount int, serverAddr string, serverPort string, si
 	}()
 
 	// wait for proxy to start
-	healthy := healthCheck(address)
+	healthy := serverutil.HealthCheck(address, 3*time.Second, 1*time.Second, 3)
 	if !healthy {
 		panic("Proxy Server failed\n")
 	}

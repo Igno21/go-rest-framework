@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/Igno21/go-rest-framework/internal/serverutil"
 )
 
 // TODO: start writing some tests
@@ -97,7 +99,7 @@ func (pp *ProxyPool) addBackend(addr string) {
 			// If server is not responding, attemp to start it
 			// If we're still not healthy, respond with an http.InternalServerError
 
-			healthy := pp.healthCheck(addr)
+			healthy := serverutil.HealthCheck(addr, 3*time.Second, 1*time.Second, 3)
 			if !healthy {
 				fmt.Printf("Backend failed %s\n", addr)
 				httpProxy.Response <- &http.Response{StatusCode: http.StatusInternalServerError}
@@ -226,24 +228,6 @@ func (pp *ProxyPool) Stop() {
 		fmt.Printf("%s\t%d\n", server, count)
 	}
 	fmt.Printf("Mismatch - %d\n", pp.proxiedMistmatch)
-}
-
-func (pp *ProxyPool) healthCheck(addr string) bool {
-	healthCheckURL := "http://" + addr + "/health"
-	client := http.Client{Timeout: 3 * time.Second}
-	retries := 10
-	for i := 0; i < retries; i++ {
-		resp, err := client.Get(healthCheckURL)
-		if err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return true
-			}
-		}
-		fmt.Printf("Waiting for backend %s...\n", addr)
-		time.Sleep(time.Second * 1)
-	}
-	return false
 }
 
 func (pp *ProxyPool) stopProxy(addr string) bool {
